@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CampusVoice</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;700;800&family=Hanken+Grotesk:wght@400;500;700&display=swap">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<style>
+:root{--bg:#eef2f6;--card:#fff;--ink:#0f1b2d;--mut:#586579;--line:#d5dce6;--acc:#0b6e66;--accInk:#fff;--warn:#b45309;--bad:#b42318;--band:#0f1b2d;--bandInk:#fff}
+@media(prefers-color-scheme:dark){:root{--bg:#0c121c;--card:#141d2b;--ink:#e8eef7;--mut:#93a1b5;--line:#26344a;--acc:#34c3b4;--accInk:#06201d;--warn:#fbbf24;--bad:#f97066;--band:#050a12}}
+*{box-sizing:border-box}
+body{margin:0;font:16px/1.55 "Hanken Grotesk",system-ui,sans-serif;background:var(--bg);color:var(--ink);padding:env(safe-area-inset-top,0) 0 env(safe-area-inset-bottom,0)}
+h1,h2,h3{font-family:"Bricolage Grotesque",system-ui,sans-serif;line-height:1.1;margin:0 0 .5em;letter-spacing:-.01em}
+.band{background:var(--band);color:var(--bandInk)}
+.wrap{max-width:900px;margin:0 auto;padding:0 18px}
+nav{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:12px 0}
+nav b{font:800 20px "Bricolage Grotesque",sans-serif;margin-right:auto}
+nav a{color:inherit;text-decoration:none;opacity:.85;padding:4px 2px;border-bottom:2px solid transparent}
+nav a:hover,nav a.on{opacity:1;border-color:var(--acc)}
+.uni{font:800 clamp(28px,7vw,52px)/1 "Bricolage Grotesque",sans-serif;padding:22px 0 26px}
+.uni small{display:block;font:500 14px "Hanken Grotesk",sans-serif;opacity:.7;margin-bottom:6px}
+main{padding:26px 0 60px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:20px;margin-bottom:16px}
+label{display:block;font-weight:700;margin:14px 0 5px;font-size:15px}
+input,select,textarea{width:100%;font:inherit;color:inherit;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 12px}
+textarea{min-height:130px;resize:vertical}
+:focus-visible{outline:3px solid var(--acc);outline-offset:2px}
+.btn{font:700 16px "Hanken Grotesk",sans-serif;background:var(--acc);color:var(--accInk);border:0;border-radius:8px;padding:11px 18px;cursor:pointer;text-decoration:none;display:inline-block}
+.btn.g{background:transparent;color:var(--ink);border:1px solid var(--line)}
+.btn.sm{padding:6px 12px;font-size:14px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.hint{color:var(--mut);font-size:14px;margin:4px 0 0}
+.chk{display:flex;gap:10px;align-items:flex-start;font-weight:500;margin-top:14px}
+.chk input{width:auto;margin-top:5px}
+.hero h1{font-size:clamp(32px,7vw,56px);max-width:15ch}
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px;margin:26px 0}
+.tag{display:inline-block;font-size:13px;font-weight:700;border:1px solid var(--line);border-radius:99px;padding:1px 10px;margin-right:6px}
+.tag.f{color:var(--bad);border-color:var(--bad)}
+.tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
+.tabs .btn{background:var(--card);color:var(--ink);border:1px solid var(--line)}
+.tabs .btn.on{background:var(--acc);color:var(--accInk);border-color:var(--acc)}
+.tid{font:800 30px "Bricolage Grotesque",sans-serif;letter-spacing:.04em;color:var(--acc)}
+.msg{border-left:4px solid var(--acc);padding:8px 12px;background:var(--bg);margin:12px 0;border-radius:0 8px 8px 0}
+.msg.w{border-color:var(--warn)}
+pre{white-space:pre-wrap;font:14px/1.5 ui-monospace,monospace;background:var(--bg);padding:10px;border-radius:8px;overflow-x:auto;margin:6px 0}
+@media(prefers-reduced-motion:no-preference){.card{animation:in .25s ease-out}@keyframes in{from{opacity:0;transform:translateY(6px)}}}
+</style>
+</head>
+<body>
+<header class="band"><div class="wrap">
+<nav id="nav"></nav>
+<div class="uni" id="uni"></div>
+</div></header>
+<main class="wrap" id="app"></main>
+
+<script>
+/* ---------- Setup: paste your Supabase values (Project Settings > API) ---------- */
+const CFG={URL:'https://YOUR-PROJECT.supabase.co',KEY:'YOUR-ANON-KEY',BASE:'/CampusVoice'};
+
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const when=t=>new Date(t).toLocaleString();
+const mt=(to,s,b)=>`mailto:${to}?subject=${encodeURIComponent(s)}&body=${encodeURIComponent(b)}`;
+const STATUS=['Sent to in-charge','Seen','In progress','Resolved','Closed (no action)'];
+const ok=!CFG.URL.includes('YOUR-');
+const sb=ok?supabase.createClient(CFG.URL,CFG.KEY):null;
+let U=null,tab='complaints',trace=null,flash='',rows=[];
+
+function getSlug(){
+  const q=new URLSearchParams(location.search).get('u');if(q)return q.toUpperCase();
+  let p=location.pathname;if(p.toLowerCase().startsWith(CFG.BASE.toLowerCase()))p=p.slice(CFG.BASE.length);
+  const s=p.split('/').filter(x=>x&&!/\.html?$/i.test(x))[0];return s?decodeURIComponent(s).toUpperCase():'';
+}
+const root=()=>CFG.BASE+'/';
+const link=s=>location.origin+CFG.BASE+'/'+s;
+const fail=e=>`<div class="card" role="alert">Something went wrong: ${esc(e?.message||e)}</div>`;
+
+async function route(){
+  if(!ok){$('#nav').innerHTML='<b>CampusVoice</b>';$('#uni').innerHTML='<small>Setup needed</small>CAMPUSVOICE';
+    $('#app').innerHTML='<div class="card"><h2>Connect Supabase</h2><p>Open index.html and paste your Supabase project URL and anon key into the CFG line at the top of the script.</p></div>';return}
+  const slug=getSlug(),r=(location.hash.replace('#/','')||'').split('/')[0];
+  U=null;
+  if(slug){const {data}=await sb.from('universities').select('id,slug,name,owner_id').eq('slug',slug).maybeSingle();U=data;}
+  $('#nav').innerHTML=`<b>CampusVoice</b>${U?`<a href="#/" data-r="">Home</a><a href="#/file" data-r="file">Report a problem</a><a href="#/track" data-r="track">Track a report</a><a href="#/admin" data-r="admin">Admin</a>`:`<a href="${root()}">Home</a><a href="#/admin" data-r="admin">University admin</a>`}`;
+  document.querySelectorAll('nav a[data-r]').forEach(a=>a.classList.toggle('on',a.dataset.r===r));
+  $('#uni').innerHTML=U?`<small>Reporting to</small>${esc(U.name.toUpperCase())}`:'<small>Welcome</small>CAMPUSVOICE';
+  if(slug&&!U){$('#app').innerHTML=`<div class="card"><h2>We couldn’t find “${esc(slug)}”</h2><p>Check the link you were given, or <a href="${root()}">go to the CampusVoice home page</a>.</p></div>`;return}
+  const v={'':home,file:fileV,track:()=>trackV(),admin:adminV}[r]||home;
+  await v();scrollTo(0,0);
+}
+window.onhashchange=route;route();
+
+/* ---------- Public pages ---------- */
+function home(){
+  if(!U){$('#app').innerHTML=`<section class="hero"><h1>Campus problems, sent to the person who can fix them.</h1>
+  <p style="max-width:55ch;color:var(--mut)">CampusVoice gives every university its own page where students report hostel, mess, canteen, academic and vending-machine issues. Reports go straight to the right in-charge, and students stay anonymous.</p></section>
+  <div class="card"><h2>Open your university’s page</h2><label for="c">University code</label>
+  <div class="row"><input id="c" style="flex:1;min-width:180px" placeholder="IITDHARWAD" onkeydown="event.key==='Enter'&&openUni()"><button class="btn" onclick="openUni()">Open</button></div>
+  <p class="hint">Your university shares a link like ${esc(link('IITDHARWAD'))}</p></div>
+  <div class="card"><h3>Want CampusVoice for your university?</h3><p class="hint" style="margin:0">Each university gets its own admin login and its own link. Contact the CampusVoice team to set yours up.</p></div>`;return}
+  $('#app').innerHTML=`<section class="hero"><h1>Something broken on campus? Tell the person who can fix it.</h1>
+  <p style="max-width:55ch;color:var(--mut)">Your report goes straight to the in-charge for that area. You stay anonymous unless the issue needs your contact, like a lost item.</p>
+  <div class="row"><a class="btn" href="#/file">Report a problem</a><a class="btn g" href="#/track">Track a report</a></div></section>
+  <div class="steps"><div class="card"><h3>1. Pick the area</h3><p class="hint">Hostel, mess, canteen, academics, vending machines and more.</p></div>
+  <div class="card"><h3>2. Describe it</h3><p class="hint">No sign-in needed. You get a tracking ID right away.</p></div>
+  <div class="card"><h3>3. Follow it</h3><p class="hint">Use your ID to see if it was seen, in progress or resolved.</p></div></div>
+  <div class="card"><h3>Anonymous, not unaccountable</h3><p class="hint" style="margin:0">In-charges never see who you are on anonymous reports. Your university e-mail is stored privately and only opened by your university’s admin if a report is flagged as abuse (threats, harassment, false accusations).</p></div>`;
+}
+function openUni(){const c=$('#c').value.trim().replace(/[^a-z0-9]/gi,'');if(c)location.href=CFG.BASE+'/'+c.toUpperCase()}
+
+async function fileV(){
+  const {data:fs,error}=await sb.from('fields').select('id,name').eq('university_id',U.id).order('name');
+  if(error)return $('#app').innerHTML=fail(error);
+  $('#app').innerHTML=`<div class="card"><h2>Report a problem</h2>
+  <label for="f">Area</label><select id="f">${fs.map(f=>`<option value="${f.id}">${esc(f.name)}</option>`).join('')}</select>
+  <label for="t">Short title</label><input id="t" maxlength="120" placeholder="Washing machine on floor 2 not working">
+  <label for="d">What happened?</label><textarea id="d" placeholder="Where, since when, and how it affects you."></textarea>
+  <label for="e">Your university e-mail</label><input id="e" type="email" autocomplete="email">
+  <p class="hint">Kept private. Only opened by the admin if this report is flagged as abuse. Your receipt is sent here.</p>
+  <label class="chk" for="s"><input type="checkbox" id="s"><span id="sl"></span></label>
+  <div id="nm" hidden><label for="n">Your name</label><input id="n" autocomplete="name"></div>
+  <p class="hint" id="er" style="color:var(--bad)" role="alert"></p>
+  <button class="btn" id="go" onclick="submitC()">Send report</button></div>`;
+  $('#f').onchange=lf;$('#s').onchange=lf;lf();
+}
+function lf(){const lost=/lost/i.test($('#f').selectedOptions[0].text),s=$('#s');
+  if(lost)s.checked=true;s.disabled=lost;
+  $('#sl').textContent=lost?'Lost and found reports always include your contact so the finder can reach you':'Share my name and e-mail with the in-charge so they can contact me';
+  $('#nm').hidden=!s.checked}
+
+async function submitC(){
+  const v=id=>$('#'+id).value.trim(),err=m=>{$('#er').textContent=m},sh=$('#s').checked,em=v('e');
+  if(v('t').length<5)return err('Add a short title (at least 5 characters).');
+  if(v('d').length<20)return err('Add a few more details (at least 20 characters) so the in-charge can act.');
+  if(!/^\S+@\S+\.\S+$/.test(em))return err('Enter a valid university e-mail. It stays private.');
+  if(sh&&!v('n'))return err('Add your name, since you chose to share contact details.');
+  $('#go').disabled=true;err('');
+  const {data:code,error}=await sb.rpc('submit_complaint',{p_slug:U.slug,p_field:v('f'),p_title:v('t'),p_body:v('d'),p_shared:sh,p_name:v('n'),p_email:em});
+  if(error){$('#go').disabled=false;return err('Could not send: '+error.message)}
+  sb.functions.invoke('send-complaint',{body:{code}}).catch(()=>{});
+  $('#app').innerHTML=`<div class="card"><h2>Your report was sent to the ${esc($('#f')?.selectedOptions[0]?.text||'')} in-charge</h2>
+  <p>Your tracking ID:</p><div class="tid">${esc(code)}</div>
+  <p class="hint">Save this ID. It’s the only way to check progress${sh?'':', and nobody can see who you are'}.</p>
+  <div class="row"><button class="btn sm" onclick="navigator.clipboard&&navigator.clipboard.writeText('${esc(code)}');this.textContent='Copied'">Copy ID</button>
+  <a class="btn sm g" href="#/track">Track a report</a><a class="btn sm g" href="#/file" onclick="setTimeout(route,0)">Report another</a></div></div>`;
+}
+
+function trackV(){
+  $('#app').innerHTML=`<div class="card"><h2>Track a report</h2><label for="i">Tracking ID</label>
+  <div class="row"><input id="i" style="flex:1;min-width:180px" placeholder="CV-A1B2C3" onkeydown="event.key==='Enter'&&lookup()"><button class="btn" onclick="lookup()">Check status</button></div></div><div id="res"></div>`;
+}
+async function lookup(){
+  const {data,error}=await sb.rpc('track_complaint',{p_code:$('#i').value});
+  if(error)return $('#res').innerHTML=fail(error);
+  const c=data?.[0];
+  $('#res').innerHTML=c?`<div class="card"><span class="tag">${esc(c.university)}</span><span class="tag">${esc(c.field_name)}</span><h3 style="margin-top:10px">${esc(c.title)}</h3>
+  <p><b>Status: ${esc(c.status)}</b><br><span class="hint">Sent ${when(c.created_at)}</span></p>
+  ${c.note?`<div class="msg"><b>Note from in-charge</b><br>${esc(c.note)}</div>`:''}</div>`
+  :'<div class="card" role="alert">No report found with that ID. Check the ID from your receipt and try again.</div>';
+}
+
+/* ---------- Admin ---------- */
+async function adminV(){
+  const {data:{session}}=await sb.auth.getSession();
+  if(session){
+    if(!U){const {data}=await sb.from('universities').select('slug').eq('owner_id',session.user.id).maybeSingle();
+      if(data){location.href=CFG.BASE+'/'+data.slug+'#/admin';return}}
+    else if(U.owner_id===session.user.id)return dash();
+  }
+  $('#app').innerHTML=`<div class="card"><h2>University admin sign in</h2>
+  <label for="ai">Admin ID</label><input id="ai" placeholder="iitdharwad@campusvoice.com" autocomplete="username">
+  <label for="ap">Password</label><input id="ap" type="password" autocomplete="current-password" onkeydown="event.key==='Enter'&&login()">
+  <p class="hint" id="ae" style="color:var(--bad)" role="alert">${session?'This account isn’t the admin of this university.':''}</p><button class="btn" onclick="login()">Sign in</button></div>`;
+}
+async function login(){
+  const {error}=await sb.auth.signInWithPassword({email:$('#ai').value.trim().toLowerCase(),password:$('#ap').value});
+  if(error)return $('#ae').textContent='Admin ID or password is wrong.';
+  location.hash='#/admin';route();
+}
+async function logout(){await sb.auth.signOut();location.href=root()}
+function go(t){tab=t;trace=null;dash()}
+
+async function dash(){
+  const T=[['complaints','Complaints'],['fields','In-charges'],['settings','Settings']];
+  $('#app').innerHTML=`<div class="card"><b>Your students’ link</b><div class="row"><input readonly id="lk" value="${esc(link(U.slug))}" style="flex:1;min-width:200px" onfocus="this.select()">
+  <button class="btn sm" onclick="navigator.clipboard&&navigator.clipboard.writeText($('#lk').value);this.textContent='Copied'">Copy</button><button class="btn sm g" onclick="logout()">Sign out</button></div></div>
+  ${flash?`<div class="msg">${esc(flash)}</div>`:''}<div class="tabs">${T.map(([k,l])=>`<button class="btn sm ${k===tab?'on':''}" onclick="go('${k}')">${l}</button>`).join('')}</div><div id="tb">Loading…</div>`;flash='';
+  await({complaints:tComp,fields:tFields,settings:tSet}[tab])();
+}
+async function tComp(){
+  const {data,error}=await sb.from('complaints').select('*').eq('university_id',U.id).order('created_at',{ascending:false});
+  if(error)return $('#tb').innerHTML=fail(error);
+  rows=data;
+  $('#tb').innerHTML=(data.length?`<button class="btn sm g" style="margin-bottom:12px" onclick="csv()">Download CSV backup</button>`:'')+(data.map(c=>`<div class="card"><div class="row" style="justify-content:space-between"><div><span class="tag">${esc(c.field_name)}</span>${c.flag?'<span class="tag f">Flagged as abuse</span>':''}<b>${esc(c.code)}</b></div><span class="hint">${when(c.created_at)}</span></div>
+  <h3 style="margin-top:10px">${esc(c.title)}</h3><p>${esc(c.body)}</p>
+  <p class="hint">${c.shared?'Shared by '+esc(c.name):'Anonymous to in-charges'}</p>
+  <div class="row"><select aria-label="Status" style="width:auto" onchange="upd('${c.id}',{status:this.value})">${STATUS.map(s=>`<option ${s===c.status?'selected':''}>${s}</option>`).join('')}</select>
+  <input aria-label="Note to the student" style="flex:1;min-width:160px" placeholder="Note to the student" value="${esc(c.note)}" onchange="upd('${c.id}',{note:this.value})">
+  ${c.flag?`<button class="btn sm" onclick="doTrace('${c.id}')">Trace sender</button>`:`<button class="btn sm g" onclick="flag('${c.id}')">Flag as abuse</button>`}</div>
+  <div id="tr${c.id}"></div></div>`).join('')||'<div class="card">No reports yet. Share your link with students to get started.</div>');
+  if(trace)doTrace(trace);
+}
+async function upd(id,o){const {error}=await sb.from('complaints').update(o).eq('id',id);if(error)alert('Could not save: '+error.message)}
+async function flag(id){if(confirm('Flag this report as abuse of anonymity? You can then trace the sender and report them.')){await upd(id,{flag:true});tComp()}}
+async function doTrace(id){
+  trace=id;const c=rows.find(x=>x.id===id);if(!c)return;
+  const {data,error}=await sb.from('complaint_private').select('email').eq('complaint_id',id).single();
+  const {data:up}=await sb.from('university_private').select('authority_email').eq('university_id',U.id).maybeSingle();
+  if(error)return;const to=up?.authority_email,
+  body=`Abuse of the anonymous reporting system at ${U.name}.\n\nReport ID: ${c.code}\nDate: ${when(c.created_at)}\nReporter e-mail: ${data.email}\n\nContent:\n${c.title}\n${c.body}`;
+  $('#tr'+id).innerHTML=`<div class="msg w"><b>Sender: ${esc(data.email)}</b><pre>${esc(body)}</pre>${to?`<a class="btn sm" href="${mt(to,'Abuse report '+c.code+' ('+U.name+')',body)}">E-mail this to ${esc(to)}</a>`:'<span class="hint">Add the authority’s e-mail under Settings to send this report.</span>'}</div>`;
+}
+function csv(){
+  const q=x=>'"'+String(x??'').replace(/"/g,'""')+'"',h=['code','created_at','field_name','title','body','status','note','shared','name','flag'];
+  const t=[h.join(',')].concat(rows.map(r=>h.map(k=>q(r[k])).join(','))).join('\n');
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([t],{type:'text/csv'}));a.download=U.slug+'-complaints.csv';a.click();
+}
+async function tFields(){
+  const [{data:fs,error},{data:cs}]=await Promise.all([sb.from('fields').select('id,name').eq('university_id',U.id).order('name'),sb.from('field_contacts').select('field_id,email').eq('university_id',U.id)]);
+  if(error)return $('#tb').innerHTML=fail(error);
+  const em=Object.fromEntries((cs||[]).map(c=>[c.field_id,c.email]));
+  $('#tb').innerHTML=`<div class="card"><h3>Area in-charges</h3><p class="hint">Reports for each area are e-mailed to the address below. Update these at the start of each year.</p>
+  ${fs.map(f=>`<div class="row" style="margin-bottom:8px"><input style="flex:1;min-width:130px" value="${esc(f.name)}" aria-label="Area name" onchange="svName('${f.id}',this.value)">
+  <input style="flex:2;min-width:200px" type="email" placeholder="incharge@university.edu" aria-label="In-charge e-mail" value="${esc(em[f.id])}" onchange="svMail('${f.id}',this.value)">
+  <button class="btn sm g" aria-label="Remove ${esc(f.name)}" onclick="rmF('${f.id}')">Remove</button></div>`).join('')}
+  <button class="btn sm g" onclick="addF()">Add an area</button></div>`;
+}
+async function svName(id,v){const {error}=await sb.from('fields').update({name:v.trim()}).eq('id',id);if(error)alert(error.message)}
+async function svMail(id,v){const {error}=await sb.from('field_contacts').upsert({field_id:id,university_id:U.id,email:v.trim()});if(error)alert(error.message)}
+async function addF(){await sb.from('fields').insert({university_id:U.id,name:'New area'});tFields()}
+async function rmF(id){if(confirm('Remove this area? Past reports stay in your list.')){await sb.from('fields').delete().eq('id',id);tFields()}}
+async function tSet(){
+  const {data:up}=await sb.from('university_private').select('authority_email').eq('university_id',U.id).maybeSingle();
+  $('#tb').innerHTML=`<div class="card"><h3>Authority for abuse reports</h3><p class="hint">Where traced abuse reports are sent (for example the Dean of Students).</p>
+  <label for="au">Authority e-mail</label><input id="au" type="email" value="${esc(up?.authority_email)}" onchange="sb.from('university_private').upsert({university_id:U.id,authority_email:this.value.trim()}).then(r=>r.error&&alert(r.error.message))"></div>
+  <div class="card"><h3>University name</h3><label for="un">Shown at the top of every page and e-mail</label><input id="un" value="${esc(U.name)}" onchange="sb.from('universities').update({name:this.value.trim()||U.name}).eq('id',U.id).then(()=>route())"></div>`;
+}
+</script>
+</body>
+</html>
