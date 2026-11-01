@@ -14,12 +14,13 @@ Deno.serve(async (req) => {
   // Claim the complaint so it can only ever be e-mailed once.
   const { data: c } = await db.from('complaints').update({ emailed: true }).eq('code', code).eq('emailed', false).select().maybeSingle();
   if (!c) return new Response('{}', { headers: cors });
-  const { data: u } = await db.from('universities').select('name').eq('id', c.university_id).single();
+  const { data: u } = await db.from('universities').select('name,slug').eq('id', c.university_id).single();
   const { data: fc } = await db.from('field_contacts').select('email').eq('field_id', c.field_id).maybeSingle();
   const { data: p } = await db.from('complaint_private').select('email').eq('complaint_id', c.id).single();
   const U = u!.name.toUpperCase();
+  const site = Deno.env.get('SITE_URL') ?? 'https://sdv-chess.github.io/CampusVoice';
   if (fc?.email) await mail(fc.email, `[${U}] ${c.field_name}: ${c.title} (${c.code})`,
-`${U} via CampusVoice\nComplaint ${c.code}\nArea: ${c.field_name}\nReported by: ${c.shared ? c.name + ' <' + p!.email + '>' : 'Anonymous student'}\nDate: ${c.created_at}\n\n${c.title}\n\n${c.body}\n\nPlease act on this and update the status in your CampusVoice admin page.`, U + ' CampusVoice');
+`${U} via CampusVoice\nComplaint ${c.code}\nArea: ${c.field_name}\nReported by: ${c.shared ? c.name + ' <' + p!.email + '>' : 'Anonymous student'}\nDate: ${c.created_at}\n\n${c.title}\n\n${c.body}\n\nReply to the student and update the status here (no login needed):\n${site}/${u!.slug}#/respond/${c.code}/${c.respond_token}`, U + ' CampusVoice');
   await mail(p!.email, `Your ${u!.name} report ${c.code} was sent`, `Your report "${c.title}" was sent to the ${c.field_name} in-charge.\nTracking ID: ${c.code}`, U + ' CampusVoice');
   return new Response('{}', { headers: cors });
 });

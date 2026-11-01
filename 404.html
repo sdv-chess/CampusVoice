@@ -79,14 +79,14 @@ const fail=e=>`<div class="card" role="alert">Something went wrong: ${esc(e?.mes
 async function route(){
   if(!ok){$('#nav').innerHTML='<b>CampusVoice</b>';$('#uni').innerHTML='<small>Setup needed</small>CAMPUSVOICE';
     $('#app').innerHTML='<div class="card"><h2>Connect Supabase</h2><p>Open index.html and paste your Supabase project URL and anon key into the CFG line at the top of the script.</p></div>';return}
-  const slug=getSlug(),r=(location.hash.replace('#/','')||'').split('/')[0];
+  const slug=getSlug(),hp=(location.hash.replace('#/','')||'').split('/'),r=hp[0];
   U=null;
   if(slug){const {data}=await sb.from('universities').select('id,slug,name,owner_id').eq('slug',slug).maybeSingle();U=data;}
   $('#nav').innerHTML=`<b>CampusVoice</b>${U?`<a href="#/" data-r="">Home</a><a href="#/file" data-r="file">Report a problem</a><a href="#/track" data-r="track">Track a report</a><a href="#/admin" data-r="admin">Admin</a>`:`<a href="${root()}">Home</a><a href="#/admin" data-r="admin">University admin</a>`}`;
   document.querySelectorAll('nav a[data-r]').forEach(a=>a.classList.toggle('on',a.dataset.r===r));
   $('#uni').innerHTML=U?`<small>Reporting to</small>${esc(U.name.toUpperCase())}`:'<small>Welcome</small>CAMPUSVOICE';
   if(slug&&!U){$('#app').innerHTML=`<div class="card"><h2>We couldn’t find “${esc(slug)}”</h2><p>Check the link you were given, or <a href="${root()}">go to the CampusVoice home page</a>.</p></div>`;return}
-  const v={'':home,file:fileV,track:()=>trackV(),admin:adminV}[r]||home;
+  const v={'':home,file:fileV,track:()=>trackV(),admin:adminV,respond:()=>respondV(hp)}[r]||home;
   await v();scrollTo(0,0);
 }
 window.onhashchange=route;route();
@@ -158,6 +158,22 @@ async function lookup(){
   <p><b>Status: ${esc(c.status)}</b><br><span class="hint">Sent ${when(c.created_at)}</span></p>
   ${c.note?`<div class="msg"><b>Note from in-charge</b><br>${esc(c.note)}</div>`:''}</div>`
   :'<div class="card" role="alert">No report found with that ID. Check the ID from your receipt and try again.</div>';
+}
+
+
+/* ---------- In-charge response (private link from the e-mail, no login) ---------- */
+async function respondV(p){
+  const {data,error}=await sb.rpc('get_respond',{p_code:p[1]||'',p_token:p[2]||''}),c=data?.[0];
+  if(error||!c)return $('#app').innerHTML='<div class="card" role="alert"><h2>This link isn’t valid</h2><p>Open the full link from the e-mail you received.</p></div>';
+  $('#app').innerHTML=`<div class="card"><span class="tag">${esc(c.field_name)}</span><b>${esc(p[1])}</b>
+  <h2 style="margin-top:10px">${esc(c.title)}</h2><p>${esc(c.body)}</p>
+  <label for="rs">Status</label><select id="rs">${STATUS.slice(1).map(s=>`<option ${s===c.status?'selected':''}>${s}</option>`).join('')}</select>
+  <label for="rn">Note to the student (optional)</label><textarea id="rn" maxlength="500" style="min-height:90px">${esc(c.note)}</textarea>
+  <p class="hint" id="rm" role="alert"></p><button class="btn" onclick="sendResp('${esc(p[1])}','${esc(p[2])}')">Update status</button></div>`;
+}
+async function sendResp(code,tok){
+  const {data,error}=await sb.rpc('respond_complaint',{p_code:code,p_token:tok,p_status:$('#rs').value,p_note:$('#rn').value});
+  $('#rm').textContent=error||!data?'Could not save. Please try again.':'Saved. The student can now see this update.';
 }
 
 /* ---------- Admin ---------- */
