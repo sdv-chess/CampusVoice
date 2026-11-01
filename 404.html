@@ -44,6 +44,7 @@ textarea{min-height:130px;resize:vertical}
 .msg{border-left:4px solid var(--acc);padding:8px 12px;background:var(--bg);margin:12px 0;border-radius:0 8px 8px 0}
 .msg.w{border-color:var(--warn)}
 pre{white-space:pre-wrap;font:14px/1.5 ui-monospace,monospace;background:var(--bg);padding:10px;border-radius:8px;overflow-x:auto;margin:6px 0}
+  .b{border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin:10px 0;white-space:pre-wrap}.b.me{border-left:4px solid var(--acc)}
 @media(prefers-reduced-motion:no-preference){.card{animation:in .25s ease-out}@keyframes in{from{opacity:0;transform:translateY(6px)}}}
 </style>
 </head>
@@ -86,7 +87,7 @@ async function route(){
   document.querySelectorAll('nav a[data-r]').forEach(a=>a.classList.toggle('on',a.dataset.r===r));
   $('#uni').innerHTML=U?`<small>Reporting to</small>${esc(U.name.toUpperCase())}`:'<small>Welcome</small>CAMPUSVOICE';
   if(slug&&!U){$('#app').innerHTML=`<div class="card"><h2>We couldn’t find “${esc(slug)}”</h2><p>Check the link you were given, or <a href="${root()}">go to the CampusVoice home page</a>.</p></div>`;return}
-  const v={'':home,file:fileV,track:()=>trackV(),admin:adminV,respond:()=>respondV(hp)}[r]||home;
+  const v={'':home,file:fileV,track:()=>trackV(hp),admin:adminV,respond:()=>respondV(hp)}[r]||home;
   await v();scrollTo(0,0);
 }
 window.onhashchange=route;route();
@@ -136,17 +137,21 @@ async function submitC(){
   if(!/^\S+@\S+\.\S+$/.test(em))return err('Enter a valid university e-mail. It stays private.');
   if(sh&&!v('n'))return err('Add your name, since you chose to share contact details.');
   $('#go').disabled=true;err('');
-  const {data:code,error}=await sb.rpc('submit_complaint',{p_slug:U.slug,p_field:v('f'),p_title:v('t'),p_body:v('d'),p_shared:sh,p_name:v('n'),p_email:em});
+  const {data:res,error}=await sb.rpc('submit_complaint',{p_slug:U.slug,p_field:v('f'),p_title:v('t'),p_body:v('d'),p_shared:sh,p_name:v('n'),p_email:em});
   if(error){$('#go').disabled=false;return err('Could not send: '+error.message)}
+  const [code,tok]=String(res).split('/');
   sb.functions.invoke('send-complaint',{body:{code}}).catch(()=>{});
   $('#app').innerHTML=`<div class="card"><h2>Your report was sent to the ${esc($('#f')?.selectedOptions[0]?.text||'')} in-charge</h2>
   <p>Your tracking ID:</p><div class="tid">${esc(code)}</div>
-  <p class="hint">Save this ID. It’s the only way to check progress${sh?'':', and nobody can see who you are'}.</p>
+  <p class="hint">Save this ID. You can check progress with it any time${sh?'':', and nobody can see who you are'}.</p>
+  <label for="pl">Your private reply link</label><input readonly id="pl" value="${esc(link(U.slug)+'#/track/'+code+'/'+tok)}" onfocus="this.select()">
+  <p class="hint">Use it to read the in-charge’s reply and answer back. Keep it private. It was also sent to your e-mail.</p>
   <div class="row"><button class="btn sm" onclick="navigator.clipboard&&navigator.clipboard.writeText('${esc(code)}');this.textContent='Copied'">Copy ID</button>
-  <a class="btn sm g" href="#/track">Track a report</a><a class="btn sm g" href="#/file" onclick="setTimeout(route,0)">Report another</a></div></div>`;
+  <button class="btn sm g" onclick="navigator.clipboard&&navigator.clipboard.writeText($('#pl').value);this.textContent='Copied'">Copy private link</button><a class="btn sm g" href="#/track">Track a report</a><a class="btn sm g" href="#/file" onclick="setTimeout(route,0)">Report another</a></div></div>`;
 }
 
-function trackV(){
+function trackV(p=[]){
+  if(p[1]&&p[2])return threadV(p[1],p[2]);
   $('#app').innerHTML=`<div class="card"><h2>Track a report</h2><label for="i">Tracking ID</label>
   <div class="row"><input id="i" style="flex:1;min-width:180px" placeholder="CV-A1B2C3" onkeydown="event.key==='Enter'&&lookup()"><button class="btn" onclick="lookup()">Check status</button></div></div><div id="res"></div>`;
 }
@@ -161,19 +166,41 @@ async function lookup(){
 }
 
 
-/* ---------- In-charge response (private link from the e-mail, no login) ---------- */
+/* ---------- Conversation: student and in-charge, each through a private link ---------- */
+function thread(c,me){
+  const L=[{sender:'student',body:c.body,at:c.created_at}].concat(c.messages||[]);
+  return L.map(m=>`<div class="b ${m.sender===me?'me':''}"><div class="hint">${m.sender===me?'You':m.sender==='student'?'Student':'In-charge'} · ${when(m.at)}</div>${esc(m.body)}</div>`).join('');
+}
+async function threadV(code,tok){
+  const {data:c,error}=await sb.rpc('student_view',{p_code:code,p_token:tok});
+  if(error||!c)return $('#app').innerHTML='<div class="card" role="alert"><h2>This link isn’t valid</h2><p>Use the private link from your receipt e-mail, or look up your tracking ID on the Track page.</p></div>';
+  $('#app').innerHTML=`<div class="card"><span class="tag">${esc(c.university)}</span><span class="tag">${esc(c.field_name)}</span><b>${esc(code)}</b>
+  <h3 style="margin-top:10px">${esc(c.title)}</h3><p><b>Status: ${esc(c.status)}</b></p>${thread(c,'student')}
+  <label for="sm">Reply to the in-charge</label><textarea id="sm" maxlength="1000" style="min-height:90px"></textarea>
+  <p class="hint" id="sr" role="alert"></p><button class="btn" onclick="sendStu('${esc(code)}','${esc(tok)}')">Send reply</button>
+  <p class="hint">Your reply stays anonymous unless you chose to share your contact details.</p></div>`;
+}
+async function sendStu(code,tok){
+  const {data,error}=await sb.rpc('student_reply',{p_code:code,p_token:tok,p_body:$('#sm').value});
+  if(error||!data)return $('#sr').textContent='Could not send. Write at least a couple of words (up to 20 replies per report).';
+  sb.functions.invoke('send-complaint',{body:{code,stoken:tok}}).catch(()=>{});
+  threadV(code,tok);
+}
 async function respondV(p){
-  const {data,error}=await sb.rpc('get_respond',{p_code:p[1]||'',p_token:p[2]||''}),c=data?.[0];
+  const {data:c,error}=await sb.rpc('get_respond',{p_code:p[1]||'',p_token:p[2]||''});
   if(error||!c)return $('#app').innerHTML='<div class="card" role="alert"><h2>This link isn’t valid</h2><p>Open the full link from the e-mail you received.</p></div>';
   $('#app').innerHTML=`<div class="card"><span class="tag">${esc(c.field_name)}</span><b>${esc(p[1])}</b>
-  <h2 style="margin-top:10px">${esc(c.title)}</h2><p>${esc(c.body)}</p>
+  <h2 style="margin-top:10px">${esc(c.title)}</h2>${thread(c,'incharge')}
   <label for="rs">Status</label><select id="rs">${STATUS.slice(1).map(s=>`<option ${s===c.status?'selected':''}>${s}</option>`).join('')}</select>
-  <label for="rn">Note to the student (optional)</label><textarea id="rn" maxlength="500" style="min-height:90px">${esc(c.note)}</textarea>
-  <p class="hint" id="rm" role="alert"></p><button class="btn" onclick="sendResp('${esc(p[1])}','${esc(p[2])}')">Update status</button></div>`;
+  <label for="rn">Reply to the student (optional)</label><textarea id="rn" maxlength="1000" style="min-height:90px"></textarea>
+  <p class="hint" id="rm" role="alert"></p><button class="btn" onclick="sendResp('${esc(p[1])}','${esc(p[2])}')">Send</button>
+  <p class="hint">The student is e-mailed your reply. You never see their address.</p></div>`;
 }
 async function sendResp(code,tok){
   const {data,error}=await sb.rpc('respond_complaint',{p_code:code,p_token:tok,p_status:$('#rs').value,p_note:$('#rn').value});
-  $('#rm').textContent=error||!data?'Could not save. Please try again.':'Saved. The student can now see this update.';
+  if(error||!data)return $('#rm').textContent='Could not save. Please try again.';
+  sb.functions.invoke('send-complaint',{body:{code,token:tok}}).catch(()=>{});
+  await respondV(['respond',code,tok]);$('#rm').textContent='Saved. The student has been e-mailed.';
 }
 
 /* ---------- Admin ---------- */
