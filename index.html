@@ -94,7 +94,7 @@ async function route(){
     $('#app').innerHTML='<div class="card"><h2>Connect Supabase</h2><p>Open index.html and paste your Supabase project URL and anon key into the CFG line at the top of the script.</p></div>';return}
   const slug=getSlug(),hp=(location.hash.replace('#/','')||'').split('/'),r=hp[0];
   U=null;
-  if(slug){const {data}=await sb.from('universities').select('id,slug,name,owner_id').eq('slug',slug).maybeSingle();U=data;}
+  if(slug){const {data}=await sb.from('universities').select('id,slug,name,owner_id,email_domain').eq('slug',slug).maybeSingle();U=data;}
   $('#nav').innerHTML=`<b>CampusVoice</b>${U?`<a href="#/" data-r="">Home</a><a href="#/file" data-r="file">Report a problem</a><a href="#/track" data-r="track">Track a report</a><a href="#/admin" data-r="admin">Admin</a>`:`<a href="${root()}">Home</a><a href="#/admin" data-r="admin">University admin</a>`}`;
   $('#nav').insertAdjacentHTML('beforeend','<button class="tg" id="tg" onclick="toggleTheme()"></button>');updateTg();
   document.querySelectorAll('nav a[data-r]').forEach(a=>a.classList.toggle('on',a.dataset.r===r));
@@ -118,7 +118,8 @@ function home(){
   <div class="card"><h3>Want CampusVoice for your university?</h3><p class="hint" style="margin:0">Each university gets its own admin login and its own link. Contact the CampusVoice team to set yours up.</p></div>`;return}
   $('#app').innerHTML=`<section class="hero"><h1>Something broken on campus? Tell the person who can fix it.</h1>
   <p style="max-width:55ch;color:var(--mut)">Your report goes straight to the in-charge for that area. You stay anonymous unless the issue needs your contact, like a lost item.</p>
-  <div class="row"><a class="btn" href="#/file">Report a problem</a><a class="btn g" href="#/track">Track a report</a></div></section>
+  <div class="row"><a class="btn" href="#/file">Report a problem</a><a class="btn g" href="#/track">Track a report</a></div>
+  ${U.email_domain?`<p class="hint" style="margin-top:12px">Reporting needs a verified @${esc(U.email_domain)} e-mail, so only your own community can post.</p>`:''}</section>
   <div class="steps"><div class="card"><h3><span class="n">1</span>Pick the area</h3><p class="hint">Hostel, mess, canteen, academics, vending machines and more.</p></div>
   <div class="card"><h3><span class="n">2</span>Describe it</h3><p class="hint">No sign-in needed. You get a tracking ID right away.</p></div>
   <div class="card"><h3><span class="n">3</span>Follow it</h3><p class="hint">Use your ID to see if it was seen, in progress or resolved.</p></div></div>
@@ -129,12 +130,13 @@ function openUni(){const c=$('#c').value.trim().replace(/[^a-z0-9]/gi,'');if(c)l
 async function fileV(){
   const {data:fs,error}=await sb.from('fields').select('id,name').eq('university_id',U.id).order('name');
   if(error)return $('#app').innerHTML=fail(error);
+  sessEmail='';if(U.email_domain){const st=await getStu();if(!st)return authV();sessEmail=st.user.email}
   $('#app').innerHTML=`<div class="card"><h2>Report a problem</h2>
   <label for="f">Area</label><select id="f">${fs.map(f=>`<option value="${f.id}">${esc(f.name)}</option>`).join('')}</select>
   <label for="t">Short title</label><input id="t" maxlength="120" placeholder="Washing machine on floor 2 not working">
   <label for="d">What happened?</label><textarea id="d" placeholder="Where, since when, and how it affects you."></textarea>
-  <label for="e">Your university e-mail</label><input id="e" type="email" autocomplete="email">
-  <p class="hint">Kept private. Only opened by the admin if this report is flagged as abuse. Your receipt is sent here.</p>
+  ${sessEmail?`<div class="msg">Signed in as <b>${esc(sessEmail)}</b> · <a href="#/file" onclick="authOut();return false">Sign out</a></div><p class="hint">Your e-mail only confirms you belong here. In-charges never see it, and your receipt is sent to it.</p>`:`<label for="e">Your university e-mail</label><input id="e" type="email" autocomplete="email">
+  <p class="hint">Kept private. Only opened by the admin if this report is flagged as abuse. Your receipt is sent here.</p>`}
   <label class="chk" for="s"><input type="checkbox" id="s"><span id="sl"></span></label>
   <div id="nm" hidden><label for="n">Your name</label><input id="n" autocomplete="name"></div>
   <p class="hint" id="er" style="color:var(--bad)" role="alert"></p>
@@ -147,7 +149,7 @@ function lf(){const lost=/lost/i.test($('#f').selectedOptions[0].text),s=$('#s')
   $('#nm').hidden=!s.checked}
 
 async function submitC(){
-  const v=id=>$('#'+id).value.trim(),err=m=>{$('#er').textContent=m},sh=$('#s').checked,em=v('e');
+  const v=id=>$('#'+id).value.trim(),err=m=>{$('#er').textContent=m},sh=$('#s').checked,em=sessEmail||v('e');
   if(v('t').length<5)return err('Add a short title (at least 5 characters).');
   if(v('d').length<20)return err('Add a few more details (at least 20 characters) so the in-charge can act.');
   if(!/^\S+@\S+\.\S+$/.test(em))return err('Enter a valid university e-mail. It stays private.');
@@ -181,6 +183,66 @@ async function lookup(){
   :'<div class="card" role="alert">No report found with that ID. Check the ID from your receipt and try again.</div>';
 }
 
+
+/* ---------- Student sign-in (only when the university requires an e-mail domain) ---------- */
+let sessEmail='',au={mode:'login',email:'',reset:false,msg:''};
+const emailOk=e=>{e=(e||'').toLowerCase();const d=U?.email_domain;return !!d&&(e.endsWith('@'+d)||e.endsWith('.'+d))};
+async function getStu(){const {data:{session}}=await sb.auth.getSession();return session&&emailOk(session.user.email)?session:null}
+async function authOut(){await sb.auth.signOut();au={mode:'login',email:'',reset:false,msg:''};fileV()}
+const aset=(m,msg)=>{au.mode=m;au.msg=msg||'';au.email=($('#ae')?.value||au.email).trim();authV()};
+function authStart(reset){au.reset=reset;aset('email')}
+function authV(){
+  const d=esc(U.email_domain),err=`<p class="hint" id="am" style="color:var(--bad)" role="alert">${esc(au.msg)}</p>`;
+  const head=t=>`<h2>${t}</h2><p class="hint" style="margin-top:0">Use your <b>@${d}</b> e-mail. It only confirms you belong to ${esc(U.name)}. In-charges never see it.</p>`;
+  const em=`<label for="ae">University e-mail</label><input id="ae" type="email" placeholder="name@${d}" value="${esc(au.email)}" autocomplete="username">`;
+  const m=au.mode;
+  $('#app').innerHTML='<div class="card">'+(
+   m==='login'?`${head('Sign in to report')}${em}<label for="apw">Password</label><input id="apw" type="password" autocomplete="current-password" onkeydown="event.key==='Enter'&&authLogin()">${err}
+     <div class="row"><button class="btn" onclick="authLogin()">Sign in</button></div>
+     <p class="hint">First time here? <a href="#/file" onclick="authStart(false);return false">Verify your e-mail</a> · <a href="#/file" onclick="authStart(true);return false">Forgot password?</a></p>`
+  :m==='email'?`${head(au.reset?'Reset your password':'Verify your e-mail')}${em}${err}
+     <div class="row"><button class="btn" onclick="authSend()">Send me a code</button><button class="btn g" onclick="aset('login')">Back</button></div>
+     <p class="hint">We’ll e-mail a 6-digit code. ${au.reset?'Enter it, then choose a new password.':'Enter it, then choose a password for next time.'}</p>`
+  :m==='verify'?`<h2>Enter the code</h2><p class="hint" style="margin-top:0">We sent a code to <b>${esc(au.email)}</b>. Check your spam folder if it doesn’t show up within a minute.</p>
+     <label for="ac">Code</label><input id="ac" inputmode="numeric" autocomplete="one-time-code" maxlength="10" onkeydown="event.key==='Enter'&&authVerify()">${err}
+     <div class="row"><button class="btn" onclick="authVerify()">Verify</button><button class="btn g" onclick="authSend()">Send a new code</button><button class="btn g" onclick="aset('login')">Back</button></div>`
+  :`<h2>${au.reset?'Choose a new password':'Set your password'}</h2><p class="hint" style="margin-top:0">Your e-mail is verified. Next time you can sign in directly with this password.</p>
+     <label for="p1">Password (8+ characters)</label><input id="p1" type="password" autocomplete="new-password">
+     <label for="p2">Repeat password</label><input id="p2" type="password" autocomplete="new-password" onkeydown="event.key==='Enter'&&authSetPw()">${err}
+     <div class="row"><button class="btn" onclick="authSetPw()">Save password</button></div>`)+'</div>';
+}
+function chk(e){if(!emailOk(e)){au.msg=`Please use your @${U.email_domain} e-mail.`;authV();return false}return true}
+async function authLogin(){
+  const e=$('#ae').value.trim().toLowerCase();au.email=e;if(!chk(e))return;
+  const {error}=await sb.auth.signInWithPassword({email:e,password:$('#apw').value});
+  if(error){au.msg='E-mail or password is wrong. First time here? Use “Verify your e-mail” below.';return authV()}
+  fileV();
+}
+async function authSend(){
+  const e=($('#ae')?.value||au.email).trim().toLowerCase();au.email=e;if(!chk(e))return;
+  const {error}=await sb.auth.signInWithOtp({email:e,options:{shouldCreateUser:true}});
+  if(error){au.msg='Could not send the code: '+error.message;return authV()}
+  au.mode='verify';au.msg='';authV();
+}
+async function authVerify(){
+  const {error}=await sb.auth.verifyOtp({email:au.email,token:$('#ac').value.trim(),type:'email'});
+  if(error){au.msg='That code didn’t work. Check it, or send a new one.';return authV()}
+  au.mode='setpw';au.msg='';authV();
+}
+async function authSetPw(){
+  const a=$('#p1').value,b=$('#p2').value;
+  if(a.length<8){au.msg='Use at least 8 characters.';return authV()}
+  if(a!==b){au.msg='The two passwords don’t match.';return authV()}
+  const {error}=await sb.auth.updateUser({password:a});
+  if(error){au.msg=error.message;return authV()}
+  au={mode:'login',email:'',reset:false,msg:''};fileV();
+}
+async function saveDomain(v){
+  v=v.trim().toLowerCase().replace(/^@/,'')||null;
+  const {error}=await sb.from('universities').update({email_domain:v}).eq('id',U.id);
+  if(error)return alert('Please enter a domain like iitdh.ac.in');
+  U.email_domain=v;
+}
 
 /* ---------- Conversation: student and in-charge, each through a private link ---------- */
 function thread(c,me){
@@ -293,6 +355,8 @@ async function tSet(){
   const {data:up}=await sb.from('university_private').select('authority_email').eq('university_id',U.id).maybeSingle();
   $('#tb').innerHTML=`<div class="card"><h3>Authority for abuse reports</h3><p class="hint">Where traced abuse reports are sent (for example the Dean of Students).</p>
   <label for="au">Authority e-mail</label><input id="au" type="email" value="${esc(up?.authority_email)}" onchange="sb.from('university_private').upsert({university_id:U.id,authority_email:this.value.trim()}).then(r=>r.error&&alert(r.error.message))"></div>
+  <div class="card"><h3>Student sign-in</h3><p class="hint">Make students verify a university e-mail before reporting. Leave empty to let anyone report without signing in.</p>
+  <label for="dm">E-mail must end with</label><div class="row" style="flex-wrap:nowrap"><span>@</span><input id="dm" placeholder="iitdh.ac.in" value="${esc(U.email_domain)}" onchange="saveDomain(this.value)"></div></div>
   <div class="card"><h3>University name</h3><label for="un">Shown at the top of every page and e-mail</label><input id="un" value="${esc(U.name)}" onchange="sb.from('universities').update({name:this.value.trim()||U.name}).eq('id',U.id).then(()=>route())"></div>`;
 }
 </script>
