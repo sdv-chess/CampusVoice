@@ -43,8 +43,10 @@ Deno.serve(async (req) => {
   const { data: fc } = await db.from('field_contacts').select('email').eq('field_id', c.field_id).maybeSingle();
   const { data: p } = await db.from('complaint_private').select('email').eq('complaint_id', c.id).single();
   const U = u!.name.toUpperCase();
+  const { data: at } = await db.from('attachments').select('path,name').eq('complaint_id', c.id);
+  const att = at?.length ? '\n\nAttachments:\n' + at.map((x) => `${x.name}: ${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/attachments/${x.path}`).join('\n') : '';
   if (fc?.email) await mail(fc.email, `[${U}] ${c.field_name}: ${c.title} (${c.code})`,
-`${U} via CampusVoice\nComplaint ${c.code}\nArea: ${c.field_name}\nReported by: ${c.shared ? c.name + ' <' + p!.email + '>' : 'Anonymous student'}\nDate: ${c.created_at}\n\n${c.title}\n\n${c.body}\n\nReply to the student and update the status here (no login needed):\n${site}/${u!.slug}#/respond/${c.code}/${c.respond_token}`, U + ' CampusVoice');
+`${U} via CampusVoice\nComplaint ${c.code}\nArea: ${c.field_name}\nReported by: ${c.shared ? c.name + ' <' + p!.email + '>' : 'Anonymous student'}\nDate: ${c.created_at}\n\n${c.title}\n\n${c.body}${att}\n\nReply to the student and update the status here (no login needed):\n${site}/${u!.slug}#/respond/${c.code}/${c.respond_token}`, U + ' CampusVoice');
   await mail(p!.email, `Your ${u!.name} report ${c.code} was sent`,
 `Your report "${c.title}" was sent to the ${c.field_name} in-charge.\nTracking ID: ${c.code}\n\nYour private link (read replies and answer back):\n${site}/${u!.slug}#/track/${c.code}/${c.student_token}\n\nKeep this link private. Please do not reply to this e-mail.`, U + ' CampusVoice');
   return ok();

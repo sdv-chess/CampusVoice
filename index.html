@@ -54,6 +54,9 @@ textarea{min-height:130px;resize:vertical}
 .msg.w{border-color:var(--warn)}
 pre{white-space:pre-wrap;font:14px/1.5 ui-monospace,monospace;background:var(--bg);padding:10px;border-radius:8px;overflow-x:auto;margin:6px 0}
   .b{border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin:10px 0;white-space:pre-wrap}.b.me{border-left:4px solid var(--acc);background:var(--accSoft)}
+  .vh{position:absolute;opacity:0;width:1px;height:1px}.drop{display:block;border:2px dashed var(--line);border-radius:16px;padding:20px;text-align:center;color:var(--mut);cursor:pointer;font-weight:500}.drop:hover,.drop:focus-within,.drop.on{border-color:var(--acc);color:var(--acc);background:var(--accSoft)}
+.fi{display:flex;justify-content:space-between;gap:10px;align-items:center;padding:8px 14px;border:1px solid var(--line);border-radius:12px;margin-top:8px;font-size:14px;word-break:break-all}
+.at{display:flex;flex-wrap:wrap;gap:10px;margin-top:10px}.at img{width:140px;height:100px;object-fit:cover;border-radius:10px;border:1px solid var(--line);display:block}.at .f{padding:8px 14px;border:1px solid var(--line);border-radius:12px;font-size:14px;text-decoration:none}
 @media(prefers-reduced-motion:no-preference){.card{animation:in .25s ease-out}@keyframes in{from{opacity:0;transform:translateY(6px)}}}
 </style>
 </head>
@@ -130,18 +133,23 @@ function openUni(){const c=$('#c').value.trim().replace(/[^a-z0-9]/gi,'');if(c)l
 async function fileV(){
   const {data:fs,error}=await sb.from('fields').select('id,name').eq('university_id',U.id).order('name');
   if(error)return $('#app').innerHTML=fail(error);
-  sessEmail='';if(U.email_domain){const st=await getStu();if(!st)return authV();sessEmail=st.user.email}
+  picked=[];sessEmail='';if(U.email_domain){const st=await getStu();if(!st)return authV();sessEmail=st.user.email}
   $('#app').innerHTML=`<div class="card"><h2>Report a problem</h2>
   <label for="f">Area</label><select id="f">${fs.map(f=>`<option value="${f.id}">${esc(f.name)}</option>`).join('')}</select>
   <label for="t">Short title</label><input id="t" maxlength="120" placeholder="Washing machine on floor 2 not working">
   <label for="d">What happened?</label><textarea id="d" placeholder="Where, since when, and how it affects you."></textarea>
+  <label for="fl">Photos or files <span class="hint" style="font-weight:400">(optional)</span></label>
+  <label class="drop" for="fl" ondragover="event.preventDefault();this.classList.add('on')" ondragleave="this.classList.remove('on')" ondrop="event.preventDefault();this.classList.remove('on');addFiles(event.dataTransfer.files)">+ Add photos or files<br><span class="hint">Drop them here or click. Up to 5 files, 10 MB each.</span></label>
+  <input class="vh" id="fl" type="file" multiple accept="image/*,.pdf,.doc,.docx,.txt,video/mp4,video/webm" onchange="addFiles(this.files);this.value=''">
+  <div id="fls"></div>
+  <p class="hint">Photos are cleaned of location and camera details automatically. Documents can carry your name in their properties, so check them first if you want to stay anonymous.</p>
   ${sessEmail?`<div class="msg">Signed in as <b>${esc(sessEmail)}</b> · <a href="#/file" onclick="authOut();return false">Sign out</a></div><p class="hint">Your e-mail only confirms you belong here. In-charges never see it, and your receipt is sent to it.</p>`:`<label for="e">Your university e-mail</label><input id="e" type="email" autocomplete="email">
   <p class="hint">Kept private. Only opened by the admin if this report is flagged as abuse. Your receipt is sent here.</p>`}
   <label class="chk" for="s"><input type="checkbox" id="s"><span id="sl"></span></label>
   <div id="nm" hidden><label for="n">Your name</label><input id="n" autocomplete="name"></div>
   <p class="hint" id="er" style="color:var(--bad)" role="alert"></p>
   <button class="btn" id="go" onclick="submitC()">Send report</button></div>`;
-  $('#f').onchange=lf;$('#s').onchange=lf;lf();
+  $('#f').onchange=lf;$('#s').onchange=lf;lf();renderFiles();
 }
 function lf(){const lost=/lost/i.test($('#f').selectedOptions[0].text),s=$('#s');
   if(lost)s.checked=true;s.disabled=lost;
@@ -155,9 +163,17 @@ async function submitC(){
   if(!/^\S+@\S+\.\S+$/.test(em))return err('Enter a valid university e-mail. It stays private.');
   if(sh&&!v('n'))return err('Add your name, since you chose to share contact details.');
   $('#go').disabled=true;err('');
-  const {data:res,error}=await sb.rpc('submit_complaint',{p_slug:U.slug,p_field:v('f'),p_title:v('t'),p_body:v('d'),p_shared:sh,p_name:v('n'),p_email:em});
-  if(error){$('#go').disabled=false;return err('Could not send: '+error.message)}
-  const [code,tok]=String(res).split('/');
+  const files=[],fid=crypto.randomUUID();
+  try{for(const [i,f] of picked.entries()){
+    $('#go').textContent=`Uploading ${i+1} of ${picked.length}…`;
+    const b=await prep(f),path=`pending/${fid}/${i}.${b.ext}`;
+    const {error:ue}=await sb.storage.from('attachments').upload(path,b.blob,{contentType:b.mime,upsert:false});
+    if(ue)throw new Error(ue.message);
+    files.push({path,name:b.name,mime:b.mime,size:b.blob.size});
+  }}catch(e){$('#go').disabled=false;$('#go').textContent='Send report';return err('Could not upload your files: '+e.message)}
+  const {data:res,error}=await sb.rpc('submit_complaint',{p_slug:U.slug,p_field:v('f'),p_title:v('t'),p_body:v('d'),p_shared:sh,p_name:v('n'),p_email:em,p_files:files});
+  if(error){$('#go').disabled=false;$('#go').textContent='Send report';return err('Could not send: '+error.message)}
+  picked=[];const [code,tok]=String(res).split('/');
   sb.functions.invoke('send-complaint',{body:{code}}).catch(()=>{});
   $('#app').innerHTML=`<div class="card"><h2>Your report was sent to the ${esc($('#f')?.selectedOptions[0]?.text||'')} in-charge</h2>
   <p>Your tracking ID:</p><div class="tid">${esc(code)}</div>
@@ -183,6 +199,45 @@ async function lookup(){
   :'<div class="card" role="alert">No report found with that ID. Check the ID from your receipt and try again.</div>';
 }
 
+
+/* ---------- Attachments ---------- */
+const MIME={jpg:'image/jpeg',jpeg:'image/jpeg',png:'image/png',webp:'image/webp',gif:'image/gif',pdf:'application/pdf',txt:'text/plain',doc:'application/msword',docx:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',mp4:'video/mp4',webm:'video/webm'};
+let picked=[];
+const fileUrl=p=>CFG.URL+'/storage/v1/object/public/attachments/'+p;
+const kb=n=>n>1048576?(n/1048576).toFixed(1)+' MB':Math.max(1,Math.round(n/1024))+' KB';
+function attList(a){
+  if(!a||!a.length)return '';
+  return '<div class="at">'+a.map(x=>/^image\//.test(x.mime)?`<a href="${esc(fileUrl(x.path))}" target="_blank" rel="noopener"><img src="${esc(fileUrl(x.path))}" alt="${esc(x.name)}" loading="lazy"></a>`
+    :`<a class="f" href="${esc(fileUrl(x.path))}" target="_blank" rel="noopener">${esc(x.name)} (${kb(x.size||0)})</a>`).join('')+'</div>';
+}
+function addFiles(list){
+  const msg=[];
+  for(const f of list){
+    const ext=f.name.split('.').pop().toLowerCase(),img=['jpg','jpeg','png','webp'].includes(ext);
+    if(picked.length>=5){msg.push('You can attach up to 5 files.');break}
+    if(!MIME[ext]){msg.push(`“${f.name}” isn’t a supported type.`);continue}
+    if(f.size>(img?15:10)*1048576){msg.push(`“${f.name}” is too big (max ${img?15:10} MB).`);continue}
+    picked.push(f);
+  }
+  renderFiles(msg.join(' '));
+}
+function rmFile(i){picked.splice(i,1);renderFiles()}
+function renderFiles(msg=''){
+  const b=$('#fls');if(!b)return;
+  b.innerHTML=picked.map((f,i)=>`<div class="fi"><span>${esc(f.name)} (${kb(f.size)})</span><button class="btn sm g" onclick="rmFile(${i})" aria-label="Remove ${esc(f.name)}">Remove</button></div>`).join('')+(msg?`<p class="hint" style="color:var(--bad)" role="alert">${esc(msg)}</p>`:'');
+}
+async function prep(f){ // photos are re-drawn, which removes location and camera details
+  const ext=f.name.split('.').pop().toLowerCase();
+  if(['jpg','jpeg','png','webp'].includes(ext)){
+    const bm=await createImageBitmap(f),k=Math.min(1,1600/Math.max(bm.width,bm.height)),c=document.createElement('canvas');
+    c.width=Math.round(bm.width*k);c.height=Math.round(bm.height*k);
+    const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,c.width,c.height);x.drawImage(bm,0,0,c.width,c.height);
+    const blob=await new Promise(r=>c.toBlob(r,'image/jpeg',.85));
+    if(!blob)throw new Error('Could not read this image');
+    return{blob,mime:'image/jpeg',ext:'jpg',name:f.name.replace(/\.[^.]+$/,'')+'.jpg'};
+  }
+  return{blob:f,mime:MIME[ext],ext,name:f.name};
+}
 
 /* ---------- Student sign-in (only when the university requires an e-mail domain) ---------- */
 let sessEmail='',au={mode:'login',email:'',reset:false,msg:''};
@@ -246,8 +301,8 @@ async function saveDomain(v){
 
 /* ---------- Conversation: student and in-charge, each through a private link ---------- */
 function thread(c,me){
-  const L=[{sender:'student',body:c.body,at:c.created_at}].concat(c.messages||[]);
-  return L.map(m=>`<div class="b ${m.sender===me?'me':''}"><div class="hint">${m.sender===me?'You':m.sender==='student'?'Student':'In-charge'} · ${when(m.at)}</div>${esc(m.body)}</div>`).join('');
+  const L=[{sender:'student',body:c.body,at:c.created_at,att:c.attachments}].concat(c.messages||[]);
+  return L.map(m=>`<div class="b ${m.sender===me?'me':''}"><div class="hint">${m.sender===me?'You':m.sender==='student'?'Student':'In-charge'} · ${when(m.at)}</div>${esc(m.body)}${m.att?attList(m.att):''}</div>`).join('');
 }
 async function threadV(code,tok){
   const {data:c,error}=await sb.rpc('student_view',{p_code:code,p_token:tok});
@@ -313,8 +368,10 @@ async function tComp(){
   const {data,error}=await sb.from('complaints').select('*').eq('university_id',U.id).order('created_at',{ascending:false});
   if(error)return $('#tb').innerHTML=fail(error);
   rows=data;
+  const {data:at}=await sb.from('attachments').select('*').eq('university_id',U.id),by={};(at||[]).forEach(a=>(by[a.complaint_id]=by[a.complaint_id]||[]).push(a));
   $('#tb').innerHTML=(data.length?`<button class="btn sm g" style="margin-bottom:12px" onclick="csv()">Download CSV backup</button>`:'')+(data.map(c=>`<div class="card"><div class="row" style="justify-content:space-between"><div><span class="tag">${esc(c.field_name)}</span>${c.flag?'<span class="tag f">Flagged as abuse</span>':''}<b>${esc(c.code)}</b></div><span class="hint">${when(c.created_at)}</span></div>
   <h3 style="margin-top:10px">${esc(c.title)}</h3><p>${esc(c.body)}</p>
+  ${attList(by[c.id])}
   <p class="hint">${c.shared?'Shared by '+esc(c.name):'Anonymous to in-charges'}</p>
   <div class="row"><select aria-label="Status" style="width:auto" onchange="upd('${c.id}',{status:this.value})">${STATUS.map(s=>`<option ${s===c.status?'selected':''}>${s}</option>`).join('')}</select>
   <input aria-label="Note to the student" style="flex:1;min-width:160px" placeholder="Note to the student" value="${esc(c.note)}" onchange="upd('${c.id}',{note:this.value})">
