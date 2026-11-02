@@ -57,6 +57,7 @@ pre{white-space:pre-wrap;font:14px/1.5 ui-monospace,monospace;background:var(--b
   .vh{position:absolute;opacity:0;width:1px;height:1px}.drop{display:block;border:2px dashed var(--line);border-radius:16px;padding:20px;text-align:center;color:var(--mut);cursor:pointer;font-weight:500}.drop:hover,.drop:focus-within,.drop.on{border-color:var(--acc);color:var(--acc);background:var(--accSoft)}
 .fi{display:flex;justify-content:space-between;gap:10px;align-items:center;padding:8px 14px;border:1px solid var(--line);border-radius:12px;margin-top:8px;font-size:14px;word-break:break-all}
 .at{display:flex;flex-wrap:wrap;gap:10px;margin-top:10px}.at img{width:140px;height:100px;object-fit:cover;border-radius:10px;border:1px solid var(--line);display:block}.at .f{padding:8px 14px;border:1px solid var(--line);border-radius:12px;font-size:14px;text-decoration:none}
+.uni{display:flex;align-items:center;gap:18px}.lg{width:68px;height:68px;object-fit:contain;background:#fff;border-radius:18px;padding:7px;flex:none}
 @media(prefers-reduced-motion:no-preference){.card{animation:in .25s ease-out}@keyframes in{from{opacity:0;transform:translateY(6px)}}}
 </style>
 </head>
@@ -93,15 +94,15 @@ const eff=()=>document.documentElement.dataset.theme||(matchMedia('(prefers-colo
 function updateTg(){const b=$('#tg');if(b)b.textContent=eff()==='dark'?'Light mode':'Dark mode'}
 function toggleTheme(){const t=eff()==='dark'?'light':'dark';document.documentElement.dataset.theme=t;try{localStorage.setItem('cv_theme',t)}catch(e){}updateTg()}
 async function route(){
-  if(!ok){$('#nav').innerHTML='<b>CampusVoice</b>';$('#uni').innerHTML='<small>Setup needed</small>CAMPUSVOICE';
+  if(!ok){$('#nav').innerHTML='<b>CampusVoice</b>';$('#uni').innerHTML='<div><small>Setup needed</small>CAMPUSVOICE</div>';
     $('#app').innerHTML='<div class="card"><h2>Connect Supabase</h2><p>Open index.html and paste your Supabase project URL and anon key into the CFG line at the top of the script.</p></div>';return}
   const slug=getSlug(),hp=(location.hash.replace('#/','')||'').split('/'),r=hp[0];
   U=null;
-  if(slug){const {data}=await sb.from('universities').select('id,slug,name,owner_id,email_domain').eq('slug',slug).maybeSingle();U=data;}
+  if(slug){const {data}=await sb.from('universities').select('id,slug,name,owner_id,email_domain,logo_path').eq('slug',slug).maybeSingle();U=data;}
   $('#nav').innerHTML=`<b>CampusVoice</b>${U?`<a href="#/" data-r="">Home</a><a href="#/file" data-r="file">Report a problem</a><a href="#/track" data-r="track">Track a report</a><a href="#/admin" data-r="admin">Admin</a>`:`<a href="${root()}">Home</a><a href="#/admin" data-r="admin">University admin</a>`}`;
   $('#nav').insertAdjacentHTML('beforeend','<button class="tg" id="tg" onclick="toggleTheme()"></button>');updateTg();
   document.querySelectorAll('nav a[data-r]').forEach(a=>a.classList.toggle('on',a.dataset.r===r));
-  $('#uni').innerHTML=U?`<small>Reporting to</small>${esc(U.name.toUpperCase())}`:'<small>Welcome</small>CAMPUSVOICE';
+  $('#uni').innerHTML=U?`${U.logo_path?`<img class="lg" src="${esc(logoUrl(U.logo_path))}" alt="${esc(U.name)} logo">`:''}<div><small>Reporting to</small>${esc(U.name.toUpperCase())}</div>`:'<div><small>Welcome</small>CAMPUSVOICE</div>';
   if(slug&&!U){$('#app').innerHTML=`<div class="card nf"><svg width="64" height="64" viewBox="0 0 64 64" aria-hidden="true"><circle cx="28" cy="28" r="16" fill="none" stroke="currentColor" stroke-width="5"/><path d="M40 40l16 16" stroke="currentColor" stroke-width="5" stroke-linecap="round"/></svg>
   <h2>We couldn’t find that university</h2><p>There’s no university with the code “${esc(slug)}”. Check the link you were given, or type your university’s code below.</p>
   <div class="row"><input id="c" style="flex:1;min-width:180px;max-width:280px" placeholder="IITDHARWAD" aria-label="University code" onkeydown="event.key==='Enter'&&openUni()"><button class="btn" onclick="openUni()">Open</button></div>
@@ -199,6 +200,29 @@ async function lookup(){
   :'<div class="card" role="alert">No report found with that ID. Check the ID from your receipt and try again.</div>';
 }
 
+
+/* ---------- University logo ---------- */
+const logoUrl=p=>CFG.URL+'/storage/v1/object/public/logos/'+p;
+async function upLogo(f){
+  const m=$('#lgm');if(!f)return;
+  if(!/^image\/(png|jpeg|webp)$/.test(f.type)){m.textContent='Please choose a PNG, JPG or WebP image.';return}
+  if(f.size>8*1048576){m.textContent='That image is too large (max 8 MB).';return}
+  m.textContent='Uploading…';
+  try{
+    const bm=await createImageBitmap(f),k=Math.min(1,400/Math.max(bm.width,bm.height)),c=document.createElement('canvas');
+    c.width=Math.round(bm.width*k);c.height=Math.round(bm.height*k);c.getContext('2d').drawImage(bm,0,0,c.width,c.height);
+    const blob=await new Promise(r=>c.toBlob(r,'image/png')),path=`${U.id}/logo-${Date.now()}.png`;
+    const {error}=await sb.storage.from('logos').upload(path,blob,{contentType:'image/png'});if(error)throw error;
+    const old=U.logo_path,{error:e2}=await sb.from('universities').update({logo_path:path}).eq('id',U.id);if(e2)throw e2;
+    if(old)sb.storage.from('logos').remove([old]);
+    U.logo_path=path;route();
+  }catch(e){m.textContent='Could not save the logo: '+(e.message||e)}
+}
+async function rmLogo(){
+  const old=U.logo_path,{error}=await sb.from('universities').update({logo_path:null}).eq('id',U.id);
+  if(error)return alert(error.message);
+  if(old)sb.storage.from('logos').remove([old]);U.logo_path=null;route();
+}
 
 /* ---------- Attachments ---------- */
 const MIME={jpg:'image/jpeg',jpeg:'image/jpeg',png:'image/png',webp:'image/webp',gif:'image/gif',pdf:'application/pdf',txt:'text/plain',doc:'application/msword',docx:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',mp4:'video/mp4',webm:'video/webm'};
@@ -412,6 +436,11 @@ async function tSet(){
   const {data:up}=await sb.from('university_private').select('authority_email').eq('university_id',U.id).maybeSingle();
   $('#tb').innerHTML=`<div class="card"><h3>Authority for abuse reports</h3><p class="hint">Where traced abuse reports are sent (for example the Dean of Students).</p>
   <label for="au">Authority e-mail</label><input id="au" type="email" value="${esc(up?.authority_email)}" onchange="sb.from('university_private').upsert({university_id:U.id,authority_email:this.value.trim()}).then(r=>r.error&&alert(r.error.message))"></div>
+  <div class="card"><h3>University logo</h3><p class="hint">Shown beside your university’s name at the top of your page. PNG, JPG or WebP; a square image works best.</p>
+  ${U.logo_path?`<img class="lg" src="${esc(logoUrl(U.logo_path))}" alt="Current logo" style="margin:12px 0">`:''}
+  <div class="row" style="margin-top:12px"><label class="btn sm" for="lgf" style="margin:0;cursor:pointer">${U.logo_path?'Replace logo':'Upload logo'}</label>
+  <input class="vh" id="lgf" type="file" accept="image/png,image/jpeg,image/webp" onchange="upLogo(this.files[0])">${U.logo_path?'<button class="btn sm g" onclick="rmLogo()">Remove</button>':''}</div>
+  <p class="hint" id="lgm" role="alert"></p></div>
   <div class="card"><h3>Student sign-in</h3><p class="hint">Make students verify a university e-mail before reporting. Leave empty to let anyone report without signing in.</p>
   <label for="dm">E-mail must end with</label><div class="row" style="flex-wrap:nowrap"><span>@</span><input id="dm" placeholder="iitdh.ac.in" value="${esc(U.email_domain)}" onchange="saveDomain(this.value)"></div></div>
   <div class="card"><h3>University name</h3><label for="un">Shown at the top of every page and e-mail</label><input id="un" value="${esc(U.name)}" onchange="sb.from('universities').update({name:this.value.trim()||U.name}).eq('id',U.id).then(()=>route())"></div>`;
